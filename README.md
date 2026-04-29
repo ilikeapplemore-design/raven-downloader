@@ -13,7 +13,13 @@
 ---
 
 </div>
+<div align="center">
 
+[![Fork](https://img.shields.io/badge/Fork_this_Repo-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/YOUR-USERNAME/raven-downloader/fork)
+[![Guide](https://img.shields.io/badge/📖_راهنمای_کامل-4285F4?style=for-the-badge)](https://github.com/YOUR-USERNAME/raven-downloader/wiki)
+[![Report Bug](https://img.shields.io/badge/🐛_گزارش_مشکل-D14836?style=for-the-badge)](https://github.com/YOUR-USERNAME/raven-downloader/issues/new)
+
+</div>
 <div dir="rtl">
 
 ## 🎯 ریون دانلودر چیست؟
