@@ -1,0 +1,182 @@
+name: دانلود و آرشیو فایل (Raven)
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: 'لینک مستقیم فایل (Direct URL)'
+        required: true
+        type: string
+      file_rename:
+        description: 'نام دلخواه برای فایل با پسوند (اختیاری)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  download-and-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: 📥 بررسی دسترسی به مخزن
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 📦 نصب ابزارهای لازم
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+
+      - name: 🔍 استخراج نام فایل از لینک
+        id: filename
+        run: |
+          URL="${{ github.event.inputs.file_url }}"
+          
+          # حذف query string و fragment
+          CLEAN_URL="${URL%%\?*}"
+          CLEAN_URL="${CLEAN_URL%%#*}"
+          
+          RAW_NAME=$(basename "$CLEAN_URL" | tr -d '\r\n')
+          
+          # اگر نام خالی بود از نام پیش‌فرض استفاده کن
+          if [[ -z "$RAW_NAME" || "$RAW_NAME" == "/" ]]; then
+            RAW_NAME="downloaded_file"
+          fi
+          
+          # جدا کردن نام پایه و پسوند
+          EXT="${RAW_NAME##*.}"
+          if [[ "$EXT" == "$RAW_NAME" ]]; then
+            EXT=""
+          fi
+          BASE="${RAW_NAME%.*}"
+          
+          echo "raw_name=$RAW_NAME" >> $GITHUB_OUTPUT
+          echo "base=$BASE" >> $GITHUB_OUTPUT
+          echo "ext=$EXT" >> $GITHUB_OUTPUT
+          
+          echo "📋 نام اصلی فایل: $RAW_NAME"
+
+      - name: ⬇️ دانلود فایل
+        id: download
+        run: |
+          RAW_NAME="${{ steps.filename.outputs.raw_name }}"
+          
+          echo "⬇️ در حال دانلود فایل..."
+          curl -L --fail --retry 5 --retry-delay 5 \
+               --connect-timeout 20 --max-time 1200 \
+               -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+               -o "$RAW_NAME" \
+               "${{ github.event.inputs.file_url }}"
+          
+          SIZE=$(stat -c %s "$RAW_NAME" 2>/dev/null || echo "0")
+          SIZE_MB=$(( SIZE / 1048576 ))
+          echo "✅ دانلود کامل شد: $RAW_NAME (${SIZE_MB}MB)"
+          
+          echo "size=$SIZE" >> $GITHUB_OUTPUT
+
+      - name: 🏷️ تعیین نام نهایی فایل
+        id: naming
+        run: |
+          RAW_NAME="${{ steps.filename.outputs.raw_name }}"
+          BASE="${{ steps.filename.outputs.base }}"
+          EXT="${{ steps.filename.outputs.ext }}"
+          CUSTOM_NAME="${{ github.event.inputs.file_rename }}"
+          
+          # اگر کاربر نام دلخواه داد از آن استفاده کن
+          if [[ -n "$CUSTOM_NAME" ]]; then
+            FINAL_NAME="Raven_${CUSTOM_NAME}"
+            # استخراج base از نام دلخواه
+            if [[ "$CUSTOM_NAME" == *.* ]]; then
+              ARCHIVE_BASE="Raven_${CUSTOM_NAME%.*}"
+            else
+              ARCHIVE_BASE="Raven_${CUSTOM_NAME}"
+            fi
+          else
+            FINAL_NAME="Raven_${RAW_NAME}"
+            ARCHIVE_BASE="Raven_${BASE}"
+          fi
+          
+          echo "final_name=$FINAL_NAME" >> $GITHUB_OUTPUT
+          echo "archive_base=$ARCHIVE_BASE" >> $GITHUB_OUTPUT
+          
+          echo "🏷️ نام نهایی فایل: $FINAL_NAME"
+          echo "📦 پیشوند آرشیو: $ARCHIVE_BASE"
+
+      - name: ✏️ تغییر نام فایل
+        run: |
+          RAW_NAME="${{ steps.filename.outputs.raw_name }}"
+          FINAL_NAME="${{ steps.naming.outputs.final_name }}"
+          mv "$RAW_NAME" "$FINAL_NAME"
+          echo "✅ فایل به $FINAL_NAME تغییر نام یافت"
+
+      - name: 🗜️ ساخت آرشیو چندتکه
+        run: |
+          ARCHIVE_BASE="${{ steps.naming.outputs.archive_base }}"
+          FINAL_NAME="${{ steps.naming.outputs.final_name }}"
+          
+          echo "🗜️ در حال ساخت آرشیو (هر تکه ۹۵MB)..."
+          7z a -mx=1 -v95m "${ARCHIVE_BASE}.7z" "$FINAL_NAME"
+          
+          echo "✅ آرشیو ساخته شد:"
+          ls -lh "${ARCHIVE_BASE}.7z."* "${ARCHIVE_BASE}.7z" 2>/dev/null || true
+          
+          # شمارش تعداد تکه‌ها
+          CHUNK_COUNT=$(ls "${ARCHIVE_BASE}.7z."* 2>/dev/null | wc -l)
+          if [[ $CHUNK_COUNT -eq 0 ]]; then
+            CHUNK_COUNT=1
+          fi
+          echo "📊 تعداد تکه‌ها: $CHUNK_COUNT"
+
+      - name: 🗑️ حذف فایل اصلی
+        run: |
+          rm -f "${{ steps.naming.outputs.final_name }}"
+          echo "✅ فایل اصلی حذف شد"
+
+      - name: ⚙️ تنظیمات Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: ⬆️ آپلود تکه‌ها به مخزن
+        run: |
+          ARCHIVE_BASE="${{ steps.naming.outputs.archive_base }}"
+          
+          # اضافه کردن همه تکه‌ها
+          git add "${ARCHIVE_BASE}.7z."* "${ARCHIVE_BASE}.7z" 2>/dev/null || true
+          
+          if ! git diff --staged --quiet; then
+            git commit -m "📦 Raven: ${ARCHIVE_BASE}"
+            echo "⬆️ در حال آپلود..."
+            if git push origin HEAD; then
+              echo "✅ آپلود موفقیت‌آمیز بود!"
+            else
+              echo "❌ خطا در آپلود. لطفاً دوباره تلاش کنید."
+              exit 1
+            fi
+          else
+            echo "⚠️ فایلی برای آپلود وجود ندارد."
+            exit 1
+          fi
+
+      - name: 🎉 گزارش نهایی
+        run: |
+          ARCHIVE_BASE="${{ steps.naming.outputs.archive_base }}"
+          echo ""
+          echo "=============================================="
+          echo "🎉 عملیات با موفقیت انجام شد!"
+          echo ""
+          echo "📁 تکه‌های آرشیو در مخزن شما ذخیره شدند."
+          echo "🔍 فایل‌ها با پیشوند: ${ARCHIVE_BASE}.7z"
+          echo ""
+          echo "📥 حالا می‌توانید از صفحه اصلی مخزن،"
+          echo "   فایل‌ها را دانلود کنید."
+          echo ""
+          echo "💡 برای استخراج:"
+          echo "   همه تکه‌ها را در یک پوشه بریزید"
+          echo "   و با 7-Zip استخراج کنید"
+          echo "=============================================="
